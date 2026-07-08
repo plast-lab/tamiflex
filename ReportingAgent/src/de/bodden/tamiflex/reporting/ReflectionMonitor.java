@@ -18,11 +18,11 @@ import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.IllegalClassFormatException;
 import java.security.ProtectionDomain;
 
-import org.objectweb.asm.ClassAdapter;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 
 import de.bodden.tamiflex.normalizer.NameExtractor;
 
@@ -43,18 +43,21 @@ public class ReflectionMonitor implements ClassFileTransformer {
         	ClassReader creader = new ClassReader(classfileBuffer);
         	ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         	
-            ClassVisitor visitor = new ClassAdapter(writer) {
+            ClassVisitor visitor = new ClassVisitor(Opcodes.ASM9, writer) {
             	
             	public MethodVisitor visitMethod(int access, String methodName, String desc, String signature, String[] exceptions) {
             		//delegate
             		MethodVisitor mv = cv.visitMethod(access, methodName, desc, signature, exceptions);
             		if(theClassName.equals("java/lang/Class") && methodName.equals("forName")) {
-            			if(signature.contains("ClassLoader")) 
+            			// Match on the method descriptor, not the generic signature (which
+            			// is null for these JDK methods and would NPE).
+            			if(desc.contains("ClassLoader"))
             				mv = new ClassForNameWithClassloaderAdapter(mv);
             			else
             				mv = new ClassForNameAdapter(mv);
-            		} else if(theClassName.equals("java/lang/Class") && methodName.equals("newInstance0")) {
-            			mv = new ClassNewInstanceAdapter(mv);            			
+            		} else if(theClassName.equals("java/lang/Class") && methodName.equals("newInstance")) {
+            			// newInstance0() is gone on Java 9+; hook public newInstance().
+            			mv = new ClassNewInstanceAdapter(mv);
             		} else if(theClassName.equals("java/lang/reflect/Method") && methodName.equals("invoke")) {
             			mv = new MethodInvokeAdapter(mv);            			
             		} else if(theClassName.equals("java/lang/reflect/Constructor") && methodName.equals("newInstance")) {
@@ -90,7 +93,7 @@ public class ReflectionMonitor implements ClassFileTransformer {
 			mv.visitVarInsn(ALOAD, 0);
 			
 			//call logging method with that Class object as argument
-			mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/reporting/rt/ReflLogger", "classForName", "(ZLjava/lang/String;)V");
+			mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/reporting/rt/ReflLogger", "classForName", "(ZLjava/lang/String;)V", false);
 		}
 		
 	}
@@ -115,7 +118,7 @@ public class ReflectionMonitor implements ClassFileTransformer {
 			mv.visitVarInsn(ALOAD, 2);
 			
 			//call logging method with that Class object as argument
-			mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/reporting/rt/ReflLogger", "classForName", "(ZLjava/lang/String;ZLjava/lang/ClassLoader;)V");
+			mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/reporting/rt/ReflLogger", "classForName", "(ZLjava/lang/String;ZLjava/lang/ClassLoader;)V", false);
 		}
 		
 	}
@@ -134,7 +137,7 @@ public class ReflectionMonitor implements ClassFileTransformer {
 				//load "this" on stack, i.e. the Class object
 			mv.visitVarInsn(ALOAD, 0);
 			//call logging method with that Class object as argument
-			mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/reporting/rt/ReflLogger", "classNewInstance", "(ZLjava/lang/Class;)V");
+			mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/reporting/rt/ReflLogger", "classNewInstance", "(ZLjava/lang/Class;)V", false);
 		}
 		
 	}
@@ -155,7 +158,7 @@ public class ReflectionMonitor implements ClassFileTransformer {
 			//load "this" on stack, i.e. the Method object
 			mv.visitVarInsn(ALOAD, 0);
 			//call logging method with that Method object as argument
-			mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/reporting/rt/ReflLogger", "methodInvoke", "(ZLjava/lang/Object;Ljava/lang/reflect/Method;)V");
+			mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/reporting/rt/ReflLogger", "methodInvoke", "(ZLjava/lang/Object;Ljava/lang/reflect/Method;)V", false);
 		}
 		
 	}
@@ -174,7 +177,7 @@ public class ReflectionMonitor implements ClassFileTransformer {
 			//load "this" on stack, i.e. the Constructor object
 			mv.visitVarInsn(ALOAD, 0);
 			//call logging method with that Method object as argument
-			mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/reporting/rt/ReflLogger", "constructorNewInstance", "(ZLjava/lang/reflect/Constructor;)V");
+			mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/reporting/rt/ReflLogger", "constructorNewInstance", "(ZLjava/lang/reflect/Constructor;)V", false);
 		}
 		
 	}

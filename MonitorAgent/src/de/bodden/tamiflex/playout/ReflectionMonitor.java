@@ -16,11 +16,9 @@ import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.IllegalClassFormatException;
 import java.security.ProtectionDomain;
 
-import org.objectweb.asm.ClassAdapter;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
-import org.objectweb.asm.MethodAdapter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
@@ -36,15 +34,17 @@ public class ReflectionMonitor implements ClassFileTransformer {
         	ClassReader creader = new ClassReader(classfileBuffer);
         	ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
         	
-            ClassVisitor visitor = new ClassAdapter(writer) {
+            ClassVisitor visitor = new ClassVisitor(Opcodes.ASM9, writer) {
             	
             	public MethodVisitor visitMethod(int access, String methodName, String desc, String signature, String[] exceptions) {
             		//delegate
             		MethodVisitor mv = cv.visitMethod(access, methodName, desc, signature, exceptions);
             		if(className.equals("java/lang/Class") && methodName.equals("forName")) {
             			mv = new ClassForNameAdapter(mv);            			
-            		} else if(className.equals("java/lang/Class") && methodName.equals("newInstance0")) {
-            			mv = new ClassNewInstanceAdapter(mv);            			
+            		} else if(className.equals("java/lang/Class") && methodName.equals("newInstance")) {
+            			// Historically hooked the internal newInstance0(), gone on Java 9+;
+            			// hook the public newInstance() instead.
+            			mv = new ClassNewInstanceAdapter(mv);
             		} else if(className.equals("java/lang/reflect/Method") && methodName.equals("invoke")) {
             			mv = new MethodInvokeAdapter(mv);            			
             		} else if(className.equals("java/lang/reflect/Constructor") && methodName.equals("newInstance")) {
@@ -55,7 +55,10 @@ public class ReflectionMonitor implements ClassFileTransformer {
             	};
             	
             };
-            creader.accept(visitor, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+            // Keep the original stack-map frames (see PlayOutAgent.ReflectionMonitor):
+            // we only insert straight-line code before returns, so the frames stay
+            // valid and copying them through keeps the class verifiable on Java 6+.
+            creader.accept(visitor, ClassReader.SKIP_DEBUG);
             return writer.toByteArray();
         } catch (IllegalStateException e) {
             throw new IllegalClassFormatException("Error: " + e.getMessage() +
@@ -66,50 +69,50 @@ public class ReflectionMonitor implements ClassFileTransformer {
 		}
 	}
 	
-	static class ClassForNameAdapter extends MethodAdapter {
+	static class ClassForNameAdapter extends MethodVisitor {
 
 		public ClassForNameAdapter(MethodVisitor mv) {
-			super(mv);
+			super(Opcodes.ASM9, mv);
 		}
-		
+
 		@Override
 		public void visitInsn(int opcode) {
 			if(opcode==Opcodes.ARETURN) {
     			//load first argument on stack, i.e. the name of the class to be loaded
     			mv.visitVarInsn(ALOAD, 0);
     			//call logging method with that Class object as argument
-				mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/playout/rt/ReflLogger", "classForName", "(Ljava/lang/String;)V");
+				mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/playout/rt/ReflLogger", "classForName", "(Ljava/lang/String;)V", false);
 			}
 			super.visitInsn(opcode);
 		}
 		
 	}
 
-	static class ClassNewInstanceAdapter extends MethodAdapter {
+	static class ClassNewInstanceAdapter extends MethodVisitor {
 
 		public ClassNewInstanceAdapter(MethodVisitor mv) {
-			super(mv);
+			super(Opcodes.ASM9, mv);
 		}
-		
+
 		@Override
 		public void visitInsn(int opcode) {
 			if(opcode==Opcodes.ARETURN) {
     			//load "this" on stack, i.e. the Class object
     			mv.visitVarInsn(ALOAD, 0);
     			//call logging method with that Class object as argument
-				mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/playout/rt/ReflLogger", "classNewInstance", "(Ljava/lang/Class;)V"); // sthg missing here!!
+				mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/playout/rt/ReflLogger", "classNewInstance", "(Ljava/lang/Class;)V", false); // sthg missing here!!
 			}
 			super.visitInsn(opcode);
 		}
 		
 	}
 
-	static class MethodInvokeAdapter extends MethodAdapter {
+	static class MethodInvokeAdapter extends MethodVisitor {
 
 		public MethodInvokeAdapter(MethodVisitor mv) {
-			super(mv);
+			super(Opcodes.ASM9, mv);
 		}
-		
+
 		@Override
 		public void visitInsn(int opcode) {
 			if(opcode==Opcodes.ARETURN) {
@@ -118,52 +121,31 @@ public class ReflectionMonitor implements ClassFileTransformer {
     			//load "this" on stack, i.e. the Method object
     			mv.visitVarInsn(ALOAD, 0);
     			//call logging method with that Method object as argument
-				mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/playout/rt/ReflLogger", "methodInvoke", "(Ljava/lang/Object;Ljava/lang/reflect/Method;)V");
+				mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/playout/rt/ReflLogger", "methodInvoke", "(Ljava/lang/Object;Ljava/lang/reflect/Method;)V", false);
 			}
 			super.visitInsn(opcode);
 		}
 		
 	}
 	
-	static class ConstructorNewInstanceAdapter extends MethodAdapter {
+	static class ConstructorNewInstanceAdapter extends MethodVisitor {
 
 
 		public ConstructorNewInstanceAdapter(MethodVisitor mv) {
-			super(mv);
+			super(Opcodes.ASM9, mv);
 		}
-		
+
 		@Override
 		public void visitInsn(int opcode) {
 			if(opcode==Opcodes.ARETURN) {
     			//load "this" on stack, i.e. the Constructor object
     			mv.visitVarInsn(ALOAD, 0);
     			//call logging method with that Method object as argument
-				mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/playout/rt/ReflLogger", "constructorNewInstance", "(Ljava/lang/reflect/Constructor;)V");
+				mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/playout/rt/ReflLogger", "constructorNewInstance", "(Ljava/lang/reflect/Constructor;)V", false);
 			}
 			super.visitInsn(opcode);
 		}
 		
 	}
 
-	//Comment creation
-/*	static class CommentAdapter extends MethodAdapter {
-
-		public CommentAdapter(MethodVisitor mv) {
-			super(mv);
-		}
-		
-		@Override
-		public void visitInsn(int opcode) {
-			if(opcode==Opcodes.ARETURN) {
-    			//load first parameter on the stack, i.e. the designated receiver object
-    			mv.visitVarInsn(ALOAD, 1);
-    			//load "this" on stack, i.e. the Method object
-    			mv.visitVarInsn(ALOAD, 0);
-    			//call logging method with that Method object as argument
-				mv.visitMethodInsn(INVOKESTATIC, "de/bodden/tamiflex/playout/rt/ReflLogger", "Comment", "(Ljava/lang/Object;Ljava/lang/reflect/Comment;)V"); //not sure about that!!
-			}
-			super.visitInsn(opcode);
-		}
-		
-	}*/
 }

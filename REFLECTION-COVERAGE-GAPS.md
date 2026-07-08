@@ -28,6 +28,32 @@ that dispatches through these will have real dynamic edges/allocations that the 
 | 7 | **`Class.forName(Module, String)`** overload; module `ServiceLoader` provider lookup | 9 | Module-aware class loading | Transformation likely matches only the pre-module `forName` descriptors | **High** — add the extra descriptor to the existing `ClassForName` transformation |
 | 8 | **Records / sealed metadata** — `Class.getRecordComponents`, `RecordComponent.getAccessor`, `Class.getPermittedSubclasses` | 16/17 | Record (de)serialization (Jackson) uses the canonical ctor via these | New metadata APIs not in the set | **High** — metadata transformations mirroring `Class.getDeclaredFields` |
 
+## What "capturable" means here (the resolution-point principle)
+
+TamiFlex captures a mechanism when three things hold: (1) there is a concrete JDK
+**method whose body can be rewritten** (retransformable class), (2) the **resolved target
+is recoverable from that method's operands** (`this` / args / return), and (3) there is a
+real **application caller frame** on the stack (`getInvokingFrame`).
+
+The key design point for the modern additions: capture at the **resolution/creation point**,
+not the invocation. `Lookup.findVirtual(refc, name, type)` and `Proxy.newProxyInstance(.., ifaces, ..)`
+name their target explicitly in the arguments — logging *there* recovers the target identity a
+static analysis needs, exactly as TamiFlex already logs `Class.getMethod` (resolution) rather than
+the subsequent `Method.invoke`. The opaque `MethodHandle.invoke` / proxy dispatch site does not need
+to be instrumented at all once the lookup is recorded.
+
+**What still escapes (fundamental, not fixable by more transformations):**
+- **Raw `invokedynamic`** — a bytecode instruction with a JVM bootstrap, not a method call at the
+  site, so there is nothing to rewrite (string-concat, custom indy, …).
+- **Combinator-built MethodHandles** — a handle assembled via `filterArguments`/`foldArguments`/
+  `insertArguments`, or with a runtime-computed `MethodType`, has **no single resolvable target** at
+  any lookup site. This is the same limit every reflection log has (`Class.forName(userInput)` can't
+  be pinned either): we capture the *direct/common* cases, not the pathological dynamic tail.
+
+So realistic scope = items **1, 3, 5, 6, 7, 8** (lookup/creation points with a nameable target).
+Item **2** is capturable-ish but redundant (Doop models lambdas from `invokedynamic`/BootstrapMethods
+directly); item **4** logs only an event (a hidden class has no stable name → no resolvable target).
+
 ## Not a gap (worth stating)
 
 **JEP 416 — "Reimplement Core Reflection with Method Handles" (Java 18)** rewired

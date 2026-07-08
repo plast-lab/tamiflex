@@ -52,7 +52,7 @@ public class MySQLAccess {
 	private static boolean connectToDB() 
 	{
 		try {
-			Class.forName("com.mysql.jdbc.Driver");
+			Class.forName("com.mysql.cj.jdbc.Driver");
 			connect=DriverManager.getConnection(dbURL+dataBaseName+"?user="+userName+"&password="+userPass);
 	        statement = connect.createStatement();
 			return true;

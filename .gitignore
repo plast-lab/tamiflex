@@ -1,10 +1,17 @@
+# Legacy Eclipse output dirs
 de.bodden.tamiflex/bin
 MonitorAgent/bin
 Normalizer/bin
 PlayInAgent/bin
 PlayOutAgent/bin
-PlayOutAgent
 ReportingAgent/bin
 TamiFlexDatabase/bin
 Booster/bin
+
+# Gradle
+.gradle/
+build/
+**/build/
+
+# Legacy copied agent artifact
 poa.jar

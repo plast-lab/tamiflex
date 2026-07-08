@@ -19,7 +19,6 @@ import static org.objectweb.asm.Opcodes.INVOKESTATIC;
 import static org.objectweb.asm.Opcodes.IRETURN;
 import static org.objectweb.asm.Opcodes.RETURN;
 
-import org.objectweb.asm.MethodAdapter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
@@ -36,7 +35,7 @@ public class ClassGetMethodTransformation extends AbstractTransformation {
 
 	@Override
 	protected MethodVisitor getMethodVisitor(MethodVisitor parent) {
-		return new MethodAdapter(parent) {
+		return new MethodVisitor(Opcodes.ASM9, parent) {
 			
 			@Override
 			public void visitInsn(int opcode) {

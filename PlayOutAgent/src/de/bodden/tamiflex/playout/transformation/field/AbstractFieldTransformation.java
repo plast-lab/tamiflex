@@ -18,8 +18,8 @@ import static org.objectweb.asm.Opcodes.RETURN;
 
 import java.lang.reflect.Field;
 
-import org.objectweb.asm.MethodAdapter;
 import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.commons.Method;
 
@@ -34,7 +34,7 @@ public abstract class AbstractFieldTransformation extends AbstractTransformation
 
 	@Override
 	protected MethodVisitor getMethodVisitor(MethodVisitor parent) {
-		return new MethodAdapter(parent) {
+		return new MethodVisitor(Opcodes.ASM9, parent) {
 			
 			@Override
 			public void visitInsn(int opcode) {

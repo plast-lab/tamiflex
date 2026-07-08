@@ -16,7 +16,8 @@ import java.util.Map;
 import java.util.Set;
 
 import org.objectweb.asm.ClassReader;
-import org.objectweb.asm.commons.EmptyVisitor;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.Opcodes;
 
 public class ReferencedGeneratedClasses {
 	
@@ -48,7 +49,7 @@ public class ReferencedGeneratedClasses {
 	private static Set<String> namesOfGeneratedClassesReferenced(byte[] classBytes) {
 		final Set<String> res = new HashSet<String>();
 		ClassReader creader = new ClassReader(classBytes);
-		ReferencedClassesExtracter visitor = new ReferencedClassesExtracter(new EmptyVisitor(), res);
+		ReferencedClassesExtracter visitor = new ReferencedClassesExtracter(new ClassVisitor(Opcodes.ASM9){}, res);
         creader.accept(visitor, 0);
         
         //remove name of the declaring class

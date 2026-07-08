@@ -10,9 +10,9 @@
  ******************************************************************************/
 package de.bodden.tamiflex.normalizer;
 
-import org.objectweb.asm.ClassAdapter;
 import org.objectweb.asm.ClassReader;
-import org.objectweb.asm.commons.EmptyVisitor;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.Opcodes;
 
 /**
  * Extracts the name of the declared class from a byte array defining that class.
@@ -22,7 +22,7 @@ public class NameExtractor {
 	public static String extractName(byte[] classfileBuffer) {
 		ClassReader reader = new ClassReader(classfileBuffer);
 		final String[] res = new String[1];
-		reader.accept(new ClassAdapter(new EmptyVisitor()) {
+		reader.accept(new ClassVisitor(Opcodes.ASM9, null) {
 			@Override
 			public void visit(int version, int access, String name,
 					String signature, String superName, String[] interfaces) {
