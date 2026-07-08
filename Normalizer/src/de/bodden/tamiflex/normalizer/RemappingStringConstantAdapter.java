@@ -10,19 +10,19 @@
  ******************************************************************************/
 package de.bodden.tamiflex.normalizer;
 
-import org.objectweb.asm.MethodAdapter;
 import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 
 /**
- * A {@link MethodAdapter} that calls the provided {@link StringRemapper} to re-map
+ * A {@link MethodVisitor} that calls the provided {@link StringRemapper} to re-map
  * string constants.
  */
-public class RemappingStringConstantAdapter extends MethodAdapter  {
-    
+public class RemappingStringConstantAdapter extends MethodVisitor  {
+
 	protected final StringRemapper rm;
 
 	public RemappingStringConstantAdapter(MethodVisitor mv, StringRemapper rm) {
-		super(mv);
+		super(Opcodes.ASM9, mv);
 		this.rm = rm;
 	}
 	

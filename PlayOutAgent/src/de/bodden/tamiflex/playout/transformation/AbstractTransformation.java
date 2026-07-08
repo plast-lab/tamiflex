@@ -14,9 +14,9 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-import org.objectweb.asm.ClassAdapter;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
 import org.objectweb.asm.commons.Method;
 
@@ -43,7 +43,7 @@ public abstract class AbstractTransformation {
 		if (!name.equals(Type.getInternalName(affectedClass)))
 			return parent;
 		
-		return new ClassAdapter(parent) {
+		return new ClassVisitor(Opcodes.ASM9, parent) {
 			
 			@Override
 			public MethodVisitor visitMethod(int access, String name, String desc, String signature, String[] exceptions) {

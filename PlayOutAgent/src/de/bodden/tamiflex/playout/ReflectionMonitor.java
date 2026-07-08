@@ -29,9 +29,15 @@ import de.bodden.tamiflex.normalizer.NameExtractor;
 import de.bodden.tamiflex.playout.transformation.AbstractTransformation;
 
 public class ReflectionMonitor implements ClassFileTransformer {
-	
+
 	private List<AbstractTransformation> transformations = new LinkedList<AbstractTransformation>();
-	
+
+	// Internal names of the (few) JDK classes we actually rewrite. transform() bails out
+	// for everything else, so that loading an unrelated class (e.g. a java.util iterator)
+	// while this transformer is active can never re-enter our ASM pipeline and trigger a
+	// ClassCircularityError.
+	private final java.util.Set<String> affectedInternalNames = new java.util.HashSet<String>();
+
 	public ReflectionMonitor(String instruments, boolean verbose) {
 		List<String> split = new ArrayList<String>(Arrays.asList(instruments.split("[ ]+")));
 		Collections.sort(split);
@@ -46,6 +52,7 @@ public class ReflectionMonitor implements ClassFileTransformer {
 				Class<AbstractTransformation> c = (Class<AbstractTransformation>) Class.forName(className);
 				AbstractTransformation transform = c.newInstance();
 				transformations.add(transform);
+				affectedInternalNames.add(transform.getAffectedClass().getName().replace('.', '/'));
 				if(verbose) {
 					System.out.print(className);
 					System.out.println(": ");
@@ -54,8 +61,10 @@ public class ReflectionMonitor implements ClassFileTransformer {
 						System.out.print(transform.getAffectedClass().getName()+"."+m.getName()+m.getDescriptor()+"\n");
 					}
 				}
-			} catch (Exception e) {
-				throw new RuntimeException("There was an error instantiating the instrument "+className, e);
+			} catch (Throwable e) {
+				// Skip a single unusable instrument (e.g. one that targets a reflection
+				// method absent on this JDK) rather than aborting the whole agent.
+				System.err.println("TamiFlex: skipping instrument "+className+": "+e);
 			}
 		}
 	}
@@ -74,7 +83,12 @@ public class ReflectionMonitor implements ClassFileTransformer {
 			byte[] classfileBuffer) throws IllegalClassFormatException {
 		if(className==null)
 			className = NameExtractor.extractName(classfileBuffer);
-		
+
+		// Only the hooked JDK reflection classes need rewriting; skip everything else
+		// untouched (both cheaper and reentrancy-safe).
+		if(!affectedInternalNames.contains(className))
+			return null;
+
 		try {
 			final ClassReader creader = new ClassReader(classfileBuffer);
 			final ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
@@ -83,7 +97,14 @@ public class ReflectionMonitor implements ClassFileTransformer {
 			for (AbstractTransformation transformation : transformations)
 				visitor = transformation.getClassVisitor(className, visitor);
 			
-			creader.accept(visitor, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+			// Do NOT skip frames: we only insert straight-line INVOKESTATIC calls before
+			// existing returns, so the original StackMapTable stays valid and is copied
+			// through unchanged. Dropping it would produce classfiles that fail
+			// verification on major version >= 50 (Java 6+). COMPUTE_MAXS still fixes up
+			// the (larger) operand stack; we avoid COMPUTE_FRAMES because its
+			// getCommonSuperClass() loads classes and would deadlock while we are busy
+			// instrumenting java.base itself.
+			creader.accept(visitor, ClassReader.SKIP_DEBUG);
 			return writer.toByteArray();
 		} catch (IllegalStateException e) {
 			throw new IllegalClassFormatException("Error: " + e.getMessage() + " on class " + className);

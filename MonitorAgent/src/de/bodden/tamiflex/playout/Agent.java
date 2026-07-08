@@ -189,16 +189,46 @@ public class Agent {
 	}
 
 	private static void appendRtJarToBootClassPath(Instrumentation inst) throws URISyntaxException, IOException {
-		URL locationOfAgent = Agent.class.getResource("/de/bodden/tamiflex/playout/rt/ReflLogger.class");
-		if(locationOfAgent==null) {
+		// Resolve the agent jar from its code source (robust across JDK 9+ URL forms and
+		// Windows), then let java.base read the boot-loaded runtime module on Java 9+.
+		URI jarUri;
+		try {
+			jarUri = Agent.class.getProtectionDomain().getCodeSource().getLocation().toURI();
+		} catch (NullPointerException e) {
 			System.err.println("Support library for reflection log not found on classpath.");
 			System.exit(1);
+			return;
 		}
-		System.out.println(locationOfAgent);
-		String agentJarFile = locationOfAgent.getPath().substring(0, locationOfAgent.getPath().indexOf("!"));		
-		URI uri = new URI(agentJarFile);
-		JarFile jarFile = new JarFile(new File(uri));
-		inst.appendToBootstrapClassLoaderSearch(jarFile);
+		File jar = new File(jarUri);
+		if(!jar.isFile()) {
+			System.err.println("TamiFlex agent must be run from a jar file (found: "+jar+").");
+			System.exit(1);
+		}
+		inst.appendToBootstrapClassLoaderSearch(new JarFile(jar));
+		addBootLoggerReadEdge(inst);
+	}
+
+	private static void addBootLoggerReadEdge(Instrumentation inst) {
+		try {
+			Class<?> moduleClass = Class.forName("java.lang.Module"); // absent on Java 8
+			java.lang.reflect.Method getModule = Class.class.getMethod("getModule");
+			Object javaBaseModule = getModule.invoke(Object.class);
+			Class<?> bootLogger = Class.forName("de.bodden.tamiflex.playout.rt.ReflLogger", false, null);
+			Object bootModule = getModule.invoke(bootLogger);
+			java.lang.reflect.Method redefineModule = Instrumentation.class.getMethod(
+					"redefineModule", moduleClass, java.util.Set.class, java.util.Map.class,
+					java.util.Map.class, java.util.Set.class, java.util.Map.class);
+			redefineModule.invoke(inst, javaBaseModule,
+					java.util.Collections.singleton(bootModule),
+					java.util.Collections.emptyMap(),
+					java.util.Collections.emptyMap(),
+					java.util.Collections.emptySet(),
+					java.util.Collections.emptyMap());
+		} catch (ClassNotFoundException e) {
+			// Java 8: no modules.
+		} catch (Exception e) {
+			System.err.println("TamiFlex: could not grant java.base access to the reflection log runtime: "+e);
+		}
 	}
 
 	private static void usage() {

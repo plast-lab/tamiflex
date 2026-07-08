@@ -139,6 +139,7 @@ public class ReflLogger {
 		if(isReentrant()) return;
 		try {
 			StackTraceElement frame = getInvokingFrame();
+			if(frame==null) return; // reflection issued internally by the JVM: no app caller
 			logAndIncrementTargetClassEntry(frame.getClassName()+"."+frame.getMethodName(),frame.getLineNumber(),classMethodKind,c.getName());
 		} finally {
 			leavingReflectionAPI();
@@ -149,6 +150,7 @@ public class ReflLogger {
 		if(isReentrant()) return;
 		try {
 			StackTraceElement frame = getInvokingFrame();
+			if(frame==null) return;
 			logAndIncrementTargetClassEntry(frame.getClassName()+"."+frame.getMethodName(),frame.getLineNumber(),Kind.ClassForName,handleArrayTypes(typeName));
 		} finally {
 			leavingReflectionAPI();
@@ -159,23 +161,20 @@ public class ReflLogger {
 		if(isReentrant()) return;
 		try {
 			StackTraceElement frame = getInvokingFrame();
+			if(frame==null) return;
 			String[] paramTypes = classesToTypeNames(c.getParameterTypes());
 			String className = c.getDeclaringClass().getName();
-			// If this is a lambda proxy class the className comes out in the form:
-			// "<dotted package>.<class>$$Lambda$<count>/<hash code>",
-			// however, when we take its byte code to generate the class name (as happens when we 
-			// dump the classes to disk) the name does not contain the "/<hash code>".
-			// This logic below is to remove the hash code so the reflection log entries match
-			// the classes that are dumped and soot can process them.
-			if (className.contains("$$Lambda$"))
+			// Lambda / hidden proxy classes carry a per-run suffix after a '/':
+			//   JDK 8:   "<pkg>.<class>$$Lambda$<count>/<decimal hashCode>"
+			//   JDK 9+:  "<pkg>.<class>$$Lambda$<count>/0x<hex address>"
+			//   JDK 15+: "<pkg>.<class>$$Lambda/0x<hex address>" (hidden classes)
+			// The dumped bytecode name has no suffix, and the '/<...>' is non-deterministic
+			// across runs, so strip everything from the last '/' for any lambda/hidden class.
+			// (Previously this only matched the old "/<decimal hashCode>" form and printed
+			// "unexpected lambda proxy class" on JDK 9+, leaving a non-deterministic name.)
+			if (className.contains("$$Lambda") && className.lastIndexOf('/') >= 0)
 			{
-				String slashHashCode = "/" + c.getDeclaringClass().hashCode();
-				if (!className.endsWith(slashHashCode)) {
-					System.err.println("unexpected lambda proxy class: " + className);
-				}
-				else {
-					className = className.substring(0, className.length() - slashHashCode.length());
-				}
+				className = className.substring(0, className.lastIndexOf('/'));
 			}
 			logAndIncrementTargetMethodEntry(frame.getClassName()+"."+frame.getMethodName(),frame.getLineNumber(),constructorMethodKind,className,"void","<init>", c.isAccessible(), paramTypes);
 
@@ -226,10 +225,15 @@ public class ReflLogger {
 				}				
 			} while(resolved==null && c!=null);
 			if(resolved==null) {
-				Error error = new Error("Method not found : "+m+" in class "+receiverClass+" and super classes.");
-				error.printStackTrace();
+				// Could not resolve via getDeclaredMethod up the hierarchy. This is expected
+				// for methods hidden by the JDK reflection filter (e.g. sun.misc.Unsafe.getUnsafe,
+				// filtered by jdk.internal.reflect.Reflection since JDK 9) and for synthetic/hidden
+				// methods. Fall back to the Method the caller actually holds rather than throwing
+				// a (previously uncaught) Error and then NPEing on resolved.* below, which aborted
+				// benchmarks that reflect over such methods (jython, cassandra, ...).
+				resolved = m;
 			}
-			
+
 			String[] paramTypes = classesToTypeNames(resolved.getParameterTypes());
 			
 			String className = resolved.getDeclaringClass().getName();
@@ -257,6 +261,7 @@ public class ReflLogger {
 	   if(isReentrant()) return;
        try {
            StackTraceElement frame = getInvokingFrame();
+           if(frame==null) return;
            logAndIncrementTargetArrayEntry(
                    frame.getClassName()+"."+frame.getMethodName(),
                    frame.getLineNumber(),
@@ -278,6 +283,7 @@ public class ReflLogger {
 		if(isReentrant()) return;
 	    try {
 	        StackTraceElement frame = getInvokingFrame();
+	        if(frame==null) return;
 	        Class<?> fieldClass = (useDeclaredTypes && fieldMethodKind==Kind.ClassGetField) ?
 	        		getFieldReceiverClass : f.getDeclaringClass();
 			logAndIncrementTargetFieldEntry(
@@ -387,22 +393,27 @@ public class ReflLogger {
 	 * but we want to return the invoking frame, hence two frames above.)
 	 */
 	private static StackTraceElement getInvokingFrame() {
-		StackTraceElement[] stackTrace = new Exception().getStackTrace();
-		StackTraceElement outerFrame = null;		
-		boolean outside = false;
+		StackTraceElement[] stackTrace = new Throwable().getStackTrace();
+		// Return the first frame that is neither TamiFlex's own runtime nor a
+		// reflection-infrastructure frame. Walking by name (rather than a fixed
+		// "two frames up" offset) is robust to the extra frames the reflection
+		// implementation introduces across JDK versions (e.g. MethodHandle-based
+		// accessors on Java 18+) and to chained JDK methods (forName -> forName).
 		for (StackTraceElement frame : stackTrace) {
-			String c = frame.getClassName();
-			if(!outside) {
-				if (!c.equals(ReflLogger.class.getName())) {
-					outside = true;
-					continue;
-				}
-			} else {
-				outerFrame = frame;
-				break;
+			if (!isInfrastructureFrame(frame.getClassName())) {
+				return frame;
 			}
 		}
-		return outerFrame;
+		return null;
+	}
+
+	private static boolean isInfrastructureFrame(String className) {
+		return className.startsWith("de.bodden.tamiflex.")
+			|| className.equals("java.lang.Class")
+			|| className.startsWith("java.lang.reflect.")
+			|| className.startsWith("jdk.internal.reflect.")
+			|| className.startsWith("sun.reflect.")
+			|| className.startsWith("java.lang.invoke.");
 	}
 	
 	public static synchronized void writeLogfileToDisk(boolean verbose, int newClasses) {

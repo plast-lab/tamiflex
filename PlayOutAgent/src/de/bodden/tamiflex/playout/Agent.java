@@ -234,24 +234,73 @@ public class Agent {
 
 	private static void instrumentClassesForLogging(Instrumentation inst) throws UnmodifiableClassException {
 		ReflectionMonitor reflMonitor = new ReflectionMonitor(transformations, verbose);
-		inst.addTransformer(reflMonitor, CAN_RETRANSFORM);
-		
+
+		// Resolve the affected classes (which iterates internal collections and may load
+		// their iterator classes) BEFORE the transformer is active, so that lazy loading
+		// cannot re-enter transform() and cause a ClassCircularityError on newer JDKs.
 		List<Class<?>> affectedClasses = reflMonitor.getAffectedClasses();
+
+		inst.addTransformer(reflMonitor, CAN_RETRANSFORM);
 		inst.retransformClasses(affectedClasses.toArray(new Class<?>[affectedClasses.size()]));
 		
 		inst.removeTransformer(reflMonitor);
 	}
 
 	private static void appendRtJarToBootClassPath(Instrumentation inst) throws URISyntaxException, IOException {
-		URL locationOfAgent = Agent.class.getResource("/de/bodden/tamiflex/playout/rt/ReflLogger.class");
-		if(locationOfAgent==null) {
+		// Resolve the agent jar straight from its code source rather than parsing a
+		// "jar:file:...!/..." URL by hand; the latter breaks on JDK 9+ URL forms and on
+		// Windows paths.
+		URI jarUri;
+		try {
+			jarUri = Agent.class.getProtectionDomain().getCodeSource().getLocation().toURI();
+		} catch (NullPointerException e) {
 			System.err.println("Support library for reflection log not found on classpath.");
 			System.exit(1);
+			return;
 		}
-		agentJarFilePath = locationOfAgent.getPath().substring(0, locationOfAgent.getPath().indexOf("!"));		
-		URI uri = new URI(agentJarFilePath);
-		JarFile jarFile = new JarFile(new File(uri));
-		inst.appendToBootstrapClassLoaderSearch(jarFile);
+		File jar = new File(jarUri);
+		if(!jar.isFile()) {
+			System.err.println("TamiFlex agent must be run from a jar file (found: "+jar+").");
+			System.exit(1);
+		}
+		agentJarFilePath = jarUri.toString();
+		inst.appendToBootstrapClassLoaderSearch(new JarFile(jar));
+
+		// On the boot loader the runtime log classes land in that loader's *unnamed*
+		// module, which the named java.base module does not read by default. The code we
+		// weave into java.lang.Class/Method/... would then fail to link its
+		// INVOKESTATIC into ReflLogger. Add the read edge on Java 9+ (reflectively, so
+		// this class still compiles for release 8).
+		addBootLoggerReadEdge(inst);
+	}
+
+	/**
+	 * Makes java.base read the (bootstrap, unnamed) module that now hosts
+	 * {@code de.bodden.tamiflex.playout.rt.*}, so instrumented java.base methods may
+	 * call into ReflLogger. No-op on Java 8, where there is no module system.
+	 */
+	private static void addBootLoggerReadEdge(Instrumentation inst) {
+		try {
+			Class<?> moduleClass = Class.forName("java.lang.Module"); // absent on Java 8
+			java.lang.reflect.Method getModule = Class.class.getMethod("getModule");
+			Object javaBaseModule = getModule.invoke(Object.class);
+			// The bootstrap-loaded copy of ReflLogger (null loader == bootstrap).
+			Class<?> bootLogger = Class.forName("de.bodden.tamiflex.playout.rt.ReflLogger", false, null);
+			Object bootModule = getModule.invoke(bootLogger);
+			java.lang.reflect.Method redefineModule = Instrumentation.class.getMethod(
+					"redefineModule", moduleClass, java.util.Set.class, java.util.Map.class,
+					java.util.Map.class, java.util.Set.class, java.util.Map.class);
+			redefineModule.invoke(inst, javaBaseModule,
+					java.util.Collections.singleton(bootModule),
+					java.util.Collections.emptyMap(),
+					java.util.Collections.emptyMap(),
+					java.util.Collections.emptySet(),
+					java.util.Collections.emptyMap());
+		} catch (ClassNotFoundException e) {
+			// Java 8: no modules, nothing to wire up.
+		} catch (Exception e) {
+			System.err.println("TamiFlex: could not grant java.base access to the reflection log runtime: "+e);
+		}
 	}
 	
 	public static void main(String[] args) {

@@ -20,14 +20,14 @@ import java.util.Set;
 
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.commons.ClassRemapper;
 import org.objectweb.asm.commons.Remapper;
-import org.objectweb.asm.commons.RemappingClassAdapter;
 
 import de.bodden.tamiflex.normalizer.RemappingStringConstantAdapter;
 import de.bodden.tamiflex.normalizer.StringRemapper;
 
 public final class ReferencedClassesExtracter extends
-		RemappingClassAdapter {
+		ClassRemapper {
 	private final Set<String> res;
 
 	public ReferencedClassesExtracter(ClassVisitor cv, final Set<String> res) {

@@ -16,8 +16,8 @@ import static org.objectweb.asm.Opcodes.INVOKESTATIC;
 
 import java.lang.reflect.Array;
 
-import org.objectweb.asm.MethodAdapter;
 import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.commons.Method;
 
 import de.bodden.tamiflex.playout.transformation.AbstractTransformation;
@@ -31,7 +31,7 @@ public abstract class AbstractArrayTransformation extends AbstractTransformation
 	
 	@Override
 	protected MethodVisitor getMethodVisitor(MethodVisitor parent) {
-		return new MethodAdapter(parent) {
+		return new MethodVisitor(Opcodes.ASM9, parent) {
 			
 			@Override
 			public void visitInsn(int opcode) {
