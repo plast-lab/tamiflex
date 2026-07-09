@@ -23,7 +23,7 @@ that dispatches through these will have real dynamic edges/allocations that the 
 | 2 | **`invokedynamic` + `LambdaMetafactory.metafactory`** (lambdas, method refs); **`StringConcatFactory`** (string `+`) | 8 / 9 | Every lambda/method-ref; spins a **hidden class** at runtime | No reflection-API call — it's a JVM bootstrap, not a method call TamiFlex rewrites | **Low** — call-rewriting can't see `invokedynamic`; needs bootstrap/`ClassFileTransformer`-level capture (Doop already models lambdas separately) |
 | 3 | **`VarHandle`** — `Lookup.findVarHandle/findStaticVarHandle`, `arrayElementVarHandle` | 9 | Reflective field/array access; replaced `Unsafe` in concurrency code | Not a `Field.get/set` call | **High** — same shape as (1) |
 | 4 | **`Lookup.defineHiddenClass[WithClassData]`** | 15 | Runtime class definition — ByteBuddy/Mockito/proxy generators, lambda impls | No classic API; the class has no stable name | **Medium** — instrument the call; can log the *defining* class + that a hidden class was created |
-| 5 | **`sun.misc.Unsafe.allocateInstance`** / `ReflectionFactory.newConstructorForSerialization` | (6)/(9) | Allocate instances **without running a constructor** — Kryo, Jackson, Java serialization | Not `Constructor.newInstance` | **High** — instrument `allocateInstance(Class)`; the Class arg is the allocated type |
+| 5 | **`sun.misc.Unsafe.allocateInstance`** / `ReflectionFactory.newConstructorForSerialization` | (6)/(9) | Allocate instances **without running a constructor** — Kryo, Jackson, Java serialization | Not `Constructor.newInstance` | **Deferred** — `Unsafe.allocateInstance` is a **native** method (no bytecode body), so TamiFlex's callee-rewriting can't hook it; would need native-method prefixing |
 | 6 | **`java.lang.reflect.Proxy.newProxyInstance`** | 1.3 | Dynamic proxies (Spring, JDK RMI, mocking); `$Proxy` class + `InvocationHandler.invoke` | Classic TamiFlex blind spot — proxy gen + reflective dispatch not recorded | **High** — instrument `newProxyInstance`; log the proxied interfaces |
 | 7 | **`Class.forName(Module, String)`** overload; module `ServiceLoader` provider lookup | 9 | Module-aware class loading | Transformation likely matches only the pre-module `forName` descriptors | **High** — add the extra descriptor to the existing `ClassForName` transformation |
 | 8 | **Records / sealed metadata** — `Class.getRecordComponents`, `RecordComponent.getAccessor`, `Class.getPermittedSubclasses` | 16/17 | Record (de)serialization (Jackson) uses the canonical ctor via these | New metadata APIs not in the set | **High** — metadata transformations mirroring `Class.getDeclaredFields` |
@@ -70,5 +70,24 @@ Unsafe.allocateInstance**, **(6) Proxy**, then **(3) VarHandle** and **(7) the f
 **(2) invokedynamic/lambda** is architecturally hard for TamiFlex's call-rewriting model and is
 typically handled elsewhere in the analysis pipeline.
 
-_Status: this file documents the gap. Implementation of (1),(3),(5),(6),(7),(8) tracked separately;
-(2) deferred with the rationale above._
+## Implementation status
+
+**Implemented, opt-in behind `-Dtamiflex.modernReflection=true`** (or `modernReflection=true` in
+`poa.properties`) — default runs are byte-for-byte unchanged:
+- **(1) MethodHandle lookups** — `Lookup.findVirtual/findStatic/findSpecial/findConstructor` and the
+  `unreflect`/`unreflectSpecial`/`unreflectConstructor`/`unreflectGetter`/`unreflectSetter` family.
+- **(3) VarHandle + field lookups** — `Lookup.findVarHandle/findStaticVarHandle` and
+  `findGetter/findSetter/findStaticGetter/findStaticSetter`.
+- **(6) `Proxy.newProxyInstance`** — logs each proxied interface.
+- **(7) `Class.forName(Module,String)`** overload.
+
+New logger `Kind`s (`MethodHandles.Lookup.find*` / `.unreflect*`, `Proxy.newProxyInstance`) capture at
+the **resolution point**. Code: `PlayOutAgent/.../transformation/modern/` (LookupTransformation,
+ProxyTransformation, ClassForNameModuleTransformation) + new `ReflLogger` methods. Verified: with the
+flag off no modern entries appear and classic capture is unchanged; with it on, `find*`/`unreflect*`/
+`Proxy` are logged with correct Soot signatures + call sites.
+
+**Not implemented:**
+- **(5) Unsafe.allocateInstance** — native method, not body-rewritable (see table).
+- **(8) record/sealed metadata** — straightforward to add on the same pattern if needed.
+- **(2) invokedynamic / lambdas** and **(4) defineHiddenClass** — deferred (redundant / event-only, per above).

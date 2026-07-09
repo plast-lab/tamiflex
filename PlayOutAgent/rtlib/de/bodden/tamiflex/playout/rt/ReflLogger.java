@@ -301,6 +301,91 @@ public class ReflLogger {
 	    }	    
 	}
 		
+    // Strip the per-run "/0x<hex>" (or ".0x<hex>") suffix that hidden/lambda classes carry
+    // (e.g. java.lang.String$$StringConcat/0x...), so modern-reflection entries are
+    // deterministic across runs — mirroring the $$Lambda normalization in constructorMethodInvoke.
+    private static String stripHidden(String className) {
+        if(className==null) return null;
+        int i = className.indexOf("/0x");
+        if(i<0) i = className.indexOf(".0x");
+        return i>=0 ? className.substring(0, i) : className;
+    }
+
+    // A large share of MethodHandle lookups come from the JVM's own machinery — lambda
+    // metafactory (java.lang.X$$Lambda...) and string concat (java.lang.String$$StringConcat...).
+    // These synthetic classes are not app reflection and are useless to a static analysis, so
+    // modern-reflection logging skips them (keeping real application/library targets).
+    private static boolean isSyntheticMHTarget(String className) {
+        return className != null && (className.contains("$$Lambda") || className.contains("$$StringConcat"));
+    }
+
+    // ===== modern-reflection capture (opt-in) =========================================
+    // These log at the RESOLUTION point of alternative dynamic-dispatch mechanisms
+    // (java.lang.invoke.MethodHandles.Lookup, Proxy, Unsafe) so the target identity is
+    // recovered the same way TamiFlex already logs Class.getMethod/getField.
+
+    // MethodHandles.Lookup.findVirtual/findStatic/findSpecial: target is (refc,name,type).
+    public static void methodHandleMethod(Class<?> refc, String name, java.lang.invoke.MethodType type, Kind kind) {
+        if(isReentrant()) return;
+        try {
+            StackTraceElement frame = getInvokingFrame();
+            if(frame==null) return;
+            String dc = stripHidden(refc.getName());
+            if(isSyntheticMHTarget(dc)) return;
+            logAndIncrementTargetMethodEntry(frame.getClassName()+"."+frame.getMethodName(), frame.getLineNumber(),
+                kind, dc, getTypeName(type.returnType()), name, false, classesToTypeNames(type.parameterArray()));
+        } catch (Throwable e) { e.printStackTrace(); } finally { leavingReflectionAPI(); }
+    }
+
+    // MethodHandles.Lookup.findConstructor: (refc,type) -> <init> with type's params.
+    public static void methodHandleConstructor(Class<?> refc, java.lang.invoke.MethodType type, Kind kind) {
+        if(isReentrant()) return;
+        try {
+            StackTraceElement frame = getInvokingFrame();
+            if(frame==null) return;
+            String dc = stripHidden(refc.getName());
+            if(isSyntheticMHTarget(dc)) return;
+            logAndIncrementTargetMethodEntry(frame.getClassName()+"."+frame.getMethodName(), frame.getLineNumber(),
+                kind, dc, "void", "<init>", false, classesToTypeNames(type.parameterArray()));
+        } catch (Throwable e) { e.printStackTrace(); } finally { leavingReflectionAPI(); }
+    }
+
+    // MethodHandles.Lookup.find[Static]Getter/Setter and find[Static]VarHandle: field target.
+    public static void methodHandleField(Class<?> refc, String name, Class<?> fieldType, Kind kind) {
+        if(isReentrant()) return;
+        try {
+            StackTraceElement frame = getInvokingFrame();
+            if(frame==null) return;
+            String dc = stripHidden(getTypeName(refc));
+            if(isSyntheticMHTarget(dc)) return;
+            logAndIncrementTargetFieldEntry(frame.getClassName()+"."+frame.getMethodName(), frame.getLineNumber(),
+                kind, dc, getTypeName(fieldType), name, false);
+        } catch (Throwable e) { e.printStackTrace(); } finally { leavingReflectionAPI(); }
+    }
+
+    // Proxy.newProxyInstance: log each proxied interface (calls on it reach the handler).
+    public static void proxyNewProxyInstance(Class<?>[] interfaces) {
+        if(isReentrant()) return;
+        try {
+            StackTraceElement frame = getInvokingFrame();
+            if(frame==null || interfaces==null) return;
+            for (Class<?> itf : interfaces)
+                logAndIncrementTargetClassEntry(frame.getClassName()+"."+frame.getMethodName(), frame.getLineNumber(),
+                    Kind.ProxyNewProxyInstance, itf.getName());
+        } catch (Throwable e) { e.printStackTrace(); } finally { leavingReflectionAPI(); }
+    }
+
+    // Unsafe.allocateInstance(Class): an instance of the class is created (no ctor run).
+    public static void unsafeAllocateInstance(Class<?> c) {
+        if(isReentrant()) return;
+        try {
+            StackTraceElement frame = getInvokingFrame();
+            if(frame==null || c==null) return;
+            logAndIncrementTargetClassEntry(frame.getClassName()+"."+frame.getMethodName(), frame.getLineNumber(),
+                Kind.UnsafeAllocateInstance, c.getName());
+        } catch (Throwable e) { e.printStackTrace(); } finally { leavingReflectionAPI(); }
+    }
+
     private static boolean isReentrant() {
     	//this method is called at every entry point to
     	//the TamiFlex runtime; at this point we are entering the reflection API

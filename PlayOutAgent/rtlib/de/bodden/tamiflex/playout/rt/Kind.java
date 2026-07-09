@@ -40,7 +40,25 @@ public enum Kind {
 	FieldGetDeclaringClass("Field.getDeclaringClass"),
 	FieldGetModifiers("Field.getModifiers"),
 	FieldToGenericString("Field.toGenericString"),
-	FieldToString("Field.toString");
+	FieldToString("Field.toString"),
+	// --- modern-reflection captures (opt-in via -Dtamiflex.modernReflection=true) ---
+	FindVirtual("MethodHandles.Lookup.findVirtual"),
+	FindStatic("MethodHandles.Lookup.findStatic"),
+	FindSpecial("MethodHandles.Lookup.findSpecial"),
+	FindConstructor("MethodHandles.Lookup.findConstructor"),
+	FindGetter("MethodHandles.Lookup.findGetter"),
+	FindSetter("MethodHandles.Lookup.findSetter"),
+	FindStaticGetter("MethodHandles.Lookup.findStaticGetter"),
+	FindStaticSetter("MethodHandles.Lookup.findStaticSetter"),
+	FindVarHandle("MethodHandles.Lookup.findVarHandle"),
+	FindStaticVarHandle("MethodHandles.Lookup.findStaticVarHandle"),
+	Unreflect("MethodHandles.Lookup.unreflect"),
+	UnreflectSpecial("MethodHandles.Lookup.unreflectSpecial"),
+	UnreflectConstructor("MethodHandles.Lookup.unreflectConstructor"),
+	UnreflectGetter("MethodHandles.Lookup.unreflectGetter"),
+	UnreflectSetter("MethodHandles.Lookup.unreflectSetter"),
+	ProxyNewProxyInstance("Proxy.newProxyInstance"),
+	UnsafeAllocateInstance("Unsafe.allocateInstance");
 	
 	private final String output;
 

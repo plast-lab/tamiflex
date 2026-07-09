@@ -44,7 +44,17 @@ public class Agent {
 	private static boolean verbose = false;
 	private static String outPath = "out";
 	private static String transformations = "";
+	private static boolean modernReflection = false;
 	private static Socket socket;
+
+	// Opt-in extra transformations for modern dynamic-dispatch mechanisms the classic
+	// java.lang.reflect set does not cover. Appended to `transformations` ONLY when the
+	// modernReflection flag is on, so default runs are unchanged. Any of these that don't
+	// apply on the current JDK are skipped by ReflectionMonitor (it catches per-instrument).
+	private static final String MODERN_TRANSFORMATIONS =
+		"de.bodden.tamiflex.playout.transformation.modern.LookupTransformation "
+		+ "de.bodden.tamiflex.playout.transformation.modern.ProxyTransformation "
+		+ "de.bodden.tamiflex.playout.transformation.modern.ClassForNameModuleTransformation";
 
 	
 	public static void premain(String agentArgs, Instrumentation inst) throws IOException, ClassNotFoundException, UnmodifiableClassException, URISyntaxException, InterruptedException {
@@ -55,8 +65,18 @@ public class Agent {
 		System.out.println("============================================================");
 		System.out.println("TamiFlex Play-Out Agent Version "+Agent.class.getPackage().getImplementationVersion());
 
-		loadProperties();		
-		
+		loadProperties();
+
+		// Extra flag (default off): -Dtamiflex.modernReflection=true (or modernReflection=true
+		// in poa.properties) appends the modern-reflection transformations. Nothing changes
+		// unless it is set, so existing runs are unaffected.
+		if(Boolean.getBoolean("tamiflex.modernReflection"))
+			modernReflection = true;
+		if(modernReflection) {
+			transformations = (transformations.trim() + " " + MODERN_TRANSFORMATIONS).trim();
+			System.out.println("TamiFlex: modern-reflection capture ENABLED (MethodHandle/VarHandle lookups, Proxy, Class.forName(Module,String)).");
+		}
+
 		appendRtJarToBootClassPath(inst);
 
 		ReflLogger.setMustCount(count);		
@@ -185,7 +205,9 @@ public class Agent {
 			if(props.containsKey("outDir"))
 				outPath = (String) props.get("outDir"); 
 			if(props.containsKey("transformations"))
-				transformations = (String) props.get("transformations"); 
+				transformations = (String) props.get("transformations");
+			if(props.containsKey("modernReflection") && props.get("modernReflection").equals("true"))
+				modernReflection = true;
 		} catch (IOException e) {
 			throw new InternalError("Error loading default properties file: "+e.getMessage()); 
 		}		
@@ -241,8 +263,16 @@ public class Agent {
 		List<Class<?>> affectedClasses = reflMonitor.getAffectedClasses();
 
 		inst.addTransformer(reflMonitor, CAN_RETRANSFORM);
-		inst.retransformClasses(affectedClasses.toArray(new Class<?>[affectedClasses.size()]));
-		
+		// Retransform per-class so that one class that cannot be modified (e.g. a modern
+		// target absent/locked on this JDK) is skipped rather than aborting the whole batch.
+		for (Class<?> c : affectedClasses) {
+			try {
+				inst.retransformClasses(c);
+			} catch (Throwable t) {
+				System.err.println("TamiFlex: cannot instrument "+c.getName()+": "+t);
+			}
+		}
+
 		inst.removeTransformer(reflMonitor);
 	}
 
